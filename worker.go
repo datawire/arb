@@ -94,13 +94,12 @@ func (w *Worker) Trigger(ctx context.Context) {
 func (w *Worker) RunManager(ctx context.Context) error {
 	dlog.Infof(ctx, "Mgr %d: starting for %s", w.id, w.service)
 
+	// Keep track of when we last triggered the worker.
+	lastTriggered := time.Now()
+
 	// Loop forever looking for things to do.
 	for {
-		// Start by assuming that we want a full batch of entries before
-		// sending anything...
-		threshold := w.config.batchSize
-
-		// ...then wait for something to happen.
+		// Start by waiting for something to happen.
 		select {
 		case entry := <-w.entryChannel:
 			// A new entry has arrived, so we need to add it to our queue.
@@ -108,10 +107,11 @@ func (w *Worker) RunManager(ctx context.Context) error {
 			dlog.Infof(ctx, "Mgr %d: new entry", w.id)
 
 		case <-time.After(w.config.batchDelay):
-			// It's been a little while with no new entries. If we have any
-			// pendingEntries at all, send them.
+			// Make sure that we wake up at least once every batchDelay, in case
+			// traffic is really bursty: if we get a partial batch, then there's a
+			// long delay before the next message, we don't want to stall until the
+			// next message arrives.
 			dlog.Infof(ctx, "Mgr %d: delay expired", w.id)
-			threshold = 1
 
 		case <-ctx.Done():
 			// Shutdown! We're done here.
@@ -119,13 +119,31 @@ func (w *Worker) RunManager(ctx context.Context) error {
 			return nil
 		}
 
-		// If here, something has happened, and if we have at least as many pendingEntries
-		// as our threshold, it's time to send them.
-		numEntries := len(w.pendingEntries)
-		// dlog.Infof(ctx, "Mgr %d: %d entries pending, threshold %d", w.id, numEntries, threshold)
+		// If here, something has happened. If we have at least a full batch of
+		// messages, or we have at least one message and it's been at least
+		// one batch delay since the last trigger, then it's time to trigger the
+		// worker.
 
-		if numEntries >= threshold {
+		numEntries := len(w.pendingEntries)
+		dlog.Infof(ctx, "Mgr %d: %d pending, batchSize %d", w.id, numEntries, w.config.batchSize)
+
+		trigger := false
+
+		if numEntries >= w.config.batchSize {
+			dlog.Infof(ctx, "Mgr %d: triggering due to full batch", w.id)
+			trigger = true
+		} else if (numEntries > 0) && (time.Since(lastTriggered) >= w.config.batchDelay) {
+			dlog.Infof(ctx, "Mgr %d: triggering due to batch delay", w.id)
+			trigger = true
+		}
+
+		if trigger {
+			// Trigger the worker...
 			w.Trigger(ctx)
+
+			// ...and reset the lastTriggered time so we don't instantly trigger it
+			// next time through!
+			lastTriggered = time.Now()
 		}
 	}
 }
