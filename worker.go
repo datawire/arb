@@ -104,14 +104,14 @@ func (w *Worker) RunManager(ctx context.Context) error {
 		case entry := <-w.entryChannel:
 			// A new entry has arrived, so we need to add it to our queue.
 			w.Enqueue(ctx, entry)
-			dlog.Infof(ctx, "Mgr %d: new entry", w.id)
+			dlog.Debugf(ctx, "Mgr %d: new entry", w.id)
 
 		case <-time.After(w.config.batchDelay):
 			// Make sure that we wake up at least once every batchDelay, in case
 			// traffic is really bursty: if we get a partial batch, then there's a
 			// long delay before the next message, we don't want to stall until the
 			// next message arrives.
-			dlog.Infof(ctx, "Mgr %d: delay expired", w.id)
+			dlog.Debugf(ctx, "Mgr %d: delay expired", w.id)
 
 		case <-ctx.Done():
 			// Shutdown! We're done here.
@@ -125,15 +125,15 @@ func (w *Worker) RunManager(ctx context.Context) error {
 		// worker.
 
 		numEntries := len(w.pendingEntries)
-		dlog.Infof(ctx, "Mgr %d: %d pending, batchSize %d", w.id, numEntries, w.config.batchSize)
+		dlog.Debugf(ctx, "Mgr %d: %d %s pending, batchSize %d", w.id, numEntries, PluralEntry(numEntries), w.config.batchSize)
 
 		trigger := false
 
 		if numEntries >= w.config.batchSize {
-			dlog.Infof(ctx, "Mgr %d: triggering due to full batch", w.id)
+			dlog.Debugf(ctx, "Mgr %d: triggering due to full batch", w.id)
 			trigger = true
 		} else if (numEntries > 0) && (time.Since(lastTriggered) >= w.config.batchDelay) {
-			dlog.Infof(ctx, "Mgr %d: triggering due to batch delay", w.id)
+			dlog.Debugf(ctx, "Mgr %d: triggering due to batch delay", w.id)
 			trigger = true
 		}
 
@@ -159,7 +159,7 @@ func (w *Worker) RunWorker(ctx context.Context) error {
 		select {
 		case <-w.triggerChannel:
 			// We've been triggered to send a batch of entries. Hit it!
-			// dlog.Infof(ctx, "Wrk %d: triggered", w.id)
+			// dlog.Debugf(ctx, "Wrk %d: triggered", w.id)
 			w.sendall(ctx)
 
 		case <-ctx.Done():
@@ -195,13 +195,13 @@ func (w *Worker) sendall(ctx context.Context) {
 		// Increment attempt here so that the log message looks better.
 		attempt++
 
-		// dlog.Infof(ctx, "Wrk %d: sending %d entries, attempt %d", w.id, numEntries, attempt)
+		// dlog.Debugf(ctx, "Wrk %d: sending %d %s, attempt %d", w.id, numEntries, PluralEntry(numEntries), attempt)
 
 		status := w.attempt(ctx, allEntries)
 
 		if status == http.StatusOK {
 			// All good; we're done here.
-			dlog.Infof(ctx, "Wrk %d: %s OK!", w.id, w.service)
+			dlog.Debugf(ctx, "Wrk %d: %s OK!", w.id, w.service)
 			return
 		}
 
@@ -221,7 +221,7 @@ func (w *Worker) sendall(ctx context.Context) {
 		}
 
 		// We're allowed to retry. Wait for the retry delay and try again.
-		dlog.Infof(ctx, "Wrk %d: %s will retry %d in %s", w.id, w.service, status, retryDelay)
+		dlog.Debugf(ctx, "Wrk %d: %s will retry %d in %s", w.id, w.service, status, retryDelay)
 		retryDelay = retryDelay * time.Duration(w.config.retryMultiplier)
 
 		time.Sleep(retryDelay)

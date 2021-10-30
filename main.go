@@ -14,6 +14,7 @@ import (
 	"github.com/datawire/dlib/dlog"
 	als_service_v2 "github.com/envoyproxy/go-control-plane/envoy/service/accesslog/v2"
 	"github.com/golang/protobuf/jsonpb"
+	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 )
 
@@ -52,7 +53,7 @@ func NewALS(config *ArbConfig) *server {
 // one or more envoy_data_accesslog_v2.HTTPAccessLogEntry, which we need to hand to all of
 // our workers.
 func (s *server) StreamAccessLogs(stream als_service_v2.AccessLogService_StreamAccessLogsServer) error {
-	dlog.Infof(stream.Context(), "Started stream")
+	dlog.Debugf(stream.Context(), "Envoy connected")
 
 	for {
 		// Grab the ALS message. If something goes wrong, we return nil to shut the stream
@@ -68,6 +69,8 @@ func (s *server) StreamAccessLogs(stream als_service_v2.AccessLogService_StreamA
 
 		// Grab the individual log entries from the message...
 		entries := in.GetHttpLogs().LogEntry
+		numEntries := len(entries)
+		dlog.Debugf(stream.Context(), "gRPC: received %d %s", numEntries, PluralEntry(numEntries))
 
 		// ...then iterate over all the log entries from the message and feed them to
 		// our upstream workers.
@@ -80,6 +83,7 @@ func (s *server) StreamAccessLogs(stream als_service_v2.AccessLogService_StreamA
 			// makes it easier for the workers to wrangle when they hand multiple
 			// entries upstream.
 			rawEntry := json.RawMessage(entryJSON)
+			// dlog.Debugf(stream.Context(), "gRPC: received entry %d", rawEntry)
 
 			// Finally, hand rawEntry off to each worker.
 			for _, worker := range s.workers {
@@ -90,11 +94,44 @@ func (s *server) StreamAccessLogs(stream als_service_v2.AccessLogService_StreamA
 	}
 }
 
+//////////////// Logging/context glue
+
+func ContextWithLogrusLogging(ctx context.Context, cmdname string, loglevel string) context.Context {
+	// Grab a Logrus logger and default it to INFO...
+	logrusLogger := logrus.New()
+	logrusLogger.SetLevel(logrus.InfoLevel)
+
+	// ...then set up dlog and a context with it.
+	logger := dlog.WrapLogrus(logrusLogger).
+		WithField("PID", os.Getpid()).
+		WithField("CMD", cmdname)
+
+	newContext := dlog.WithLogger(ctx, logger)
+
+	// Once _that's_ done, we can check to see if our caller wants a different
+	// log level.
+	//
+	// XXX Why not do this before creating the logger?? Well, we kinda need a
+	// context and dlog so that we can log the error if the loglevel is bad...
+	if loglevel != "" {
+		parsed, err := logrus.ParseLevel(loglevel)
+
+		if err != nil {
+			dlog.Errorf(newContext, "Error parsing log level %s: %v", loglevel, err)
+		} else {
+			logrusLogger.SetLevel(parsed)
+		}
+	}
+
+	return newContext
+}
+
 //////////////// Mainline
 
 func main() {
-	// Start by setting up our context.
-	ctx := context.Background()
+	// Start by setting up logging, which is intimately tied into setting up
+	// our context.
+	ctx := ContextWithLogrusLogging(context.Background(), "ARB", os.Getenv("ARB_LOG_LEVEL"))
 
 	// After that, read our configuration.
 	config, err := readArbConfig(ctx, "/etc/arb-config")

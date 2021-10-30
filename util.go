@@ -6,6 +6,19 @@ import "net/http"
 
 //////////////// Utility functions
 
+// Pluralize returns the singular form of a word if n == 1, or the plural form otherwise.
+func Pluralize(n int, singular, plural string) string {
+	if n == 1 {
+		return singular
+	}
+	return plural
+}
+
+// PluralEntry uses Pluralize to return the correct word for the number of entries.
+func PluralEntry(n int) string {
+	return Pluralize(n, "entry", "entries")
+}
+
 // IsRetryable returns true if the given HTTP status is something we should retry.
 // A special case here is that a status less than 0 is used for a client-side failure,
 // like we couldn't create an http.Request or the like.

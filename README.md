@@ -238,6 +238,11 @@ hour:
 WARNING: no requests in one hour; check your LogService configuration
 ```
 
+## Debugging ARB
+
+Set the environment variable `ARB_LOG_LEVEL=debug` to enable more debug logging from
+ARB.
+
 ## Building ARB
 
 ### Install dependencies
