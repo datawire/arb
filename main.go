@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/datawire/dlib/dgroup"
 	"github.com/datawire/dlib/dhttp"
@@ -24,8 +25,9 @@ import (
 // go-control-plane. The "marshaler" is solely for the glue, but the "workers" array
 // stores important state for our implementation.
 type server struct {
-	marshaler jsonpb.Marshaler // Marshaler for entries
-	workers   []*Worker        // One worker per endpoint
+	marshaler       jsonpb.Marshaler // Marshaler for entries
+	workers         []*Worker        // One worker per endpoint
+	watchdogChannel chan struct{}    // Channel to reset the watchdog
 }
 
 // Compile-time assertion to verify that the server type actually implements the
@@ -44,7 +46,8 @@ func NewALS(config *ArbConfig) *server {
 
 	// We don't need to do anything with the marshaler here.
 	return &server{
-		workers: workers,
+		workers:         workers,
+		watchdogChannel: make(chan struct{}, 0),
 	}
 }
 
@@ -72,6 +75,9 @@ func (s *server) StreamAccessLogs(stream als_service_v2.AccessLogService_StreamA
 		numEntries := len(entries)
 		dlog.Debugf(stream.Context(), "gRPC: received %d %s", numEntries, PluralEntry(numEntries))
 
+		// ...reset the watchdog, since we've gotten some traffic...
+		s.watchdogChannel <- struct{}{}
+
 		// ...then iterate over all the log entries from the message and feed them to
 		// our upstream workers.
 		for _, entry := range entries {
@@ -90,6 +96,34 @@ func (s *server) StreamAccessLogs(stream als_service_v2.AccessLogService_StreamA
 				// dlog.Debugf(stream.Context(), "gRPC: sending to worker %d", worker.id)
 				worker.Add(stream.Context(), rawEntry)
 			}
+		}
+	}
+}
+
+//////////////// Traffic Watchdog
+
+// Watchdog should be started as a gorutine and managed with dgroup. It keeps track
+// of how long it's been since an event last arrived on the watchdog channel: if it's
+// been more than an hour, it warns the user to check their LogService configuration.
+func (s *server) Watchdog(ctx context.Context) error {
+	dlog.Infof(ctx, "WATCHDOG: starting")
+
+	// Loop forever, checking the watchdog channel.
+	for {
+		select {
+		case <-s.watchdogChannel:
+			// OK, some traffic has arrived. Awesome.
+			dlog.Debugf(ctx, "WATCHDOG: reset")
+
+		case <-time.After(time.Hour):
+			// It's been an hour without receiving any traffic on the
+			// watchdogChannel. Warn the user that something may be wrong.
+			dlog.Warnf(ctx, "WARNING: no requests in one hour; check your LogService configuration")
+
+		case <-ctx.Done():
+			// Shutdown! We're done here.
+			dlog.Infof(ctx, "WATCHDOG: shutting down")
+			return nil
 		}
 	}
 }
@@ -161,6 +195,9 @@ func main() {
 		// passed to them.
 		EnableSignalHandling: true,
 	})
+
+	// Start the watchdog goroutine first.
+	grp.Go("watchdog", als.Watchdog)
 
 	// Fire up two goroutines for each upstream. The Manager manages the queue of
 	// incoming events; the Worker manages actually talking to those upstreams.
