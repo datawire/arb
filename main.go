@@ -111,6 +111,15 @@ func main() {
 		EnableSignalHandling: true,
 	})
 
+	// Fire up two goroutines for each upstream. The Manager manages the queue of
+	// incoming events; the Worker manages actually talking to those upstreams.
+	for _, worker := range als.workers {
+		grp.Go(fmt.Sprintf("mgr%d", worker.id), worker.RunManager)
+		grp.Go(fmt.Sprintf("wrk%d", worker.id), worker.RunWorker)
+	}
+
+	// Fire up the gRPC server. Don't think too hard about the fact that we're
+	// using an HTTP server for gRPC: gRPC _is_ HTTP/2, after all...
 	grp.Go("gRPC", func(ctx context.Context) error {
 		grpcHandler := grpc.NewServer()
 		als_service_v2.RegisterAccessLogServiceServer(grpcHandler, als)
@@ -123,10 +132,7 @@ func main() {
 		return sc.ListenAndServe(ctx, ":9001")
 	})
 
-	for _, worker := range als.workers {
-		grp.Go(fmt.Sprintf("worker%d", worker.id), worker.Run)
-	}
-
+	// After that, just wait to shutdown.
 	err = grp.Wait()
 
 	if err != nil {

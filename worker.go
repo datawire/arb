@@ -17,12 +17,15 @@ import (
 )
 
 type Worker struct {
-	mutex          sync.Mutex
-	config         *ArbConfig
-	id             int
-	service        string               // cached copy of the service URL
-	entryChannel   chan json.RawMessage // Channel to receive JSON entries
-	pendingEntries []json.RawMessage    // List of JSON entries to be processed
+	config  *ArbConfig // The configuration for this whole ARB
+	id      int        // The index of service we're managing
+	service string     // Cached copy of the service URL
+
+	mutex          sync.Mutex        // Protects access to pendingEntries
+	pendingEntries []json.RawMessage // List of JSON entries to be processed
+
+	entryChannel   chan json.RawMessage // Channel to receive JSON entries from gRPC
+	triggerChannel chan struct{}        // Channel for the manager to trigger the worker
 }
 
 func NewWorker(config *ArbConfig, id int) *Worker {
@@ -30,8 +33,9 @@ func NewWorker(config *ArbConfig, id int) *Worker {
 		config:         config,
 		id:             id,
 		service:        config.services[id],
-		entryChannel:   make(chan json.RawMessage),
 		pendingEntries: make([]json.RawMessage, 0),
+		entryChannel:   make(chan json.RawMessage),
+		triggerChannel: make(chan struct{}),
 	}
 }
 
@@ -61,9 +65,24 @@ func (w *Worker) GrabEntries(ctx context.Context) []json.RawMessage {
 	return allEntries
 }
 
-// Run should be called as a goroutine and managed by dgroup.
-func (w *Worker) Run(ctx context.Context) error {
-	dlog.Infof(ctx, "Worker starting for %s", w.service)
+// Trigger triggers the worker goroutine to actually send the next batch of
+// entries.
+func (w *Worker) Trigger(ctx context.Context) {
+	// This is just a nonblocking send on our triggerChannel.
+	select {
+	case w.triggerChannel <- struct{}{}:
+		break
+	default:
+		break
+	}
+}
+
+// RunManager should be called as a goroutine and managed by dgroup.
+//
+// It listens for new entries from the gRPC server, queues them up, and triggers the
+// Worker when it's time to send a new batch of entries.
+func (w *Worker) RunManager(ctx context.Context) error {
+	dlog.Infof(ctx, "Mgr %d: starting for %s", w.id, w.service)
 
 	for {
 		threshold := w.config.batchSize
@@ -71,27 +90,52 @@ func (w *Worker) Run(ctx context.Context) error {
 		select {
 		case entry := <-w.entryChannel:
 			w.Enqueue(ctx, entry)
-			dlog.Infof(ctx, "Worker %d: new entry", w.id)
+			dlog.Infof(ctx, "Mgr %d: new entry", w.id)
 
 		case <-time.After(w.config.batchDelay):
-			dlog.Infof(ctx, "Worker %d: delay expired", w.id)
-			threshold = 0
+			dlog.Infof(ctx, "Mgr %d: delay expired", w.id)
+			threshold = 1
 
 		case <-ctx.Done():
-			dlog.Infof(ctx, "Worker %d: shutting down", w.id)
+			dlog.Infof(ctx, "Mgr %d: shutting down", w.id)
 			return nil
 		}
 
-		dlog.Infof(ctx, "Worker %d: %d entries pending, threshold %d", w.id, len(w.pendingEntries), threshold)
+		// If here, something has happened, and if we have at least as many pendingEntries
+		// as our threshold, it's time to send them.
+		numEntries := len(w.pendingEntries)
+		// dlog.Infof(ctx, "Mgr %d: %d entries pending, threshold %d", w.id, numEntries, threshold)
 
-		if len(w.pendingEntries) > threshold {
-			w.sendall(ctx)
+		if numEntries >= threshold {
+			w.Trigger(ctx)
 		}
 	}
 }
 
-// sendall handles the heavy lifting of actually sending requests
-// to the service.
+// RunWorker should be called as a goroutine and managed by dgroup.
+// Its purpose is to actually send groups of entries to the upstream
+// service, managing retries and backoff.
+func (w *Worker) RunWorker(ctx context.Context) error {
+	dlog.Infof(ctx, "Wrk %d: starting for %s", w.id, w.service)
+
+	// Loop forever looking for things to do.
+	for {
+		select {
+		case <-w.triggerChannel:
+			// We've been triggered to send a batch of entries. Hit it!
+			// dlog.Infof(ctx, "Wrk %d: triggered", w.id)
+			w.sendall(ctx)
+
+		case <-ctx.Done():
+			// Shutdown! We're done here.
+			dlog.Infof(ctx, "Wrk %d: shutting down", w.id)
+			return nil
+		}
+	}
+}
+
+// sendall handles the heavy lifting of actually sending requests to the upstream
+// service.
 func (w *Worker) sendall(ctx context.Context) {
 	// Grab our pendingEntries.
 	rawEntries := w.GrabEntries(ctx)
