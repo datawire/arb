@@ -179,8 +179,8 @@ func main() {
 			Handler: grpcHandler,
 		}
 
-		dlog.Info(ctx, "starting...")
-		return sc.ListenAndServe(ctx, ":9001")
+		dlog.Infof(ctx, "Listening on port %d...", config.port)
+		return sc.ListenAndServe(ctx, fmt.Sprintf(":%d", config.port))
 	})
 
 	// After that, just wait to shutdown.
