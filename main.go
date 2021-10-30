@@ -175,6 +175,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	dlog.Infof(ctx, "ARB startup: queueSize       %v", config.queueSize)
 	dlog.Infof(ctx, "ARB startup: batchSize       %v", config.batchSize)
 	dlog.Infof(ctx, "ARB startup: batchDelay      %v", config.batchDelay)
 	dlog.Infof(ctx, "ARB startup: requestTimeout  %v", config.requestTimeout)

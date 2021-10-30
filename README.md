@@ -12,6 +12,13 @@ If a REST call fails with a 5YZ status, ARB will retry, with a configurable back
 retries, up to a configurable maximum number of retries. For other errors, ARB will *not*
 retry, though it will log the error.
 
+Normally, ARB uses an internal circular buffer with a fixed maximum size to batch requests:
+if the upstream services are not able to keep up with the rate of incoming messages, ARB
+will drop the oldest messages in the buffer. If messages are dropped, ARB will log a warning
+every five minutes to that effect. The size of this circular buffer is configurable,
+and if the size is set to 0, the queue will simply grow without bound (which risks ARB running
+out of memory and crashing).
+
 The REST requests are simple POSTS to whatever URLs are configured for the upstream
 services, with `Content-Type: application/json` and a body that is a JSON-encoded array
 of Envoy [`HTTPAccessLogEntries`]. The upstream services can handle the entries in 
@@ -107,6 +114,7 @@ The contents of the map are:
 | Parameter         | Type              | Default | Semantics |
 |-------------------|-------------------|---------|-----------|
 | `port`            | `int`             | 9001    | Port on which to listen |
+| `queueSize`       | `int`             | 4096    | Maximum number of messages to buffer; 0 to grow indefinitely |
 | `batchSize`       | `int`             | 5       | Number of messages to receive from Envoy before sending to REST services |
 | `batchDelay`      | `duration`        | 30s     | Interval between batches |
 | `requestTimeout`  | `duration`        | 300ms   | Request timeout for REST calls |

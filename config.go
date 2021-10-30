@@ -16,6 +16,7 @@ import (
 
 type ArbConfig struct {
 	port            int           // port we'll listen on
+	queueSize       int           // maximum number of messages to buffer
 	batchSize       int           // number of requests to batch together
 	batchDelay      time.Duration // delay between batches
 	requestTimeout  time.Duration // timeout for each request
@@ -128,6 +129,7 @@ func readArbConfig(ctx context.Context, dirPath string) (*ArbConfig, error) {
 	config := &ArbConfig{}
 
 	config.port = readIntWithDefault(ctx, dirPath, "port", 9001)
+	config.queueSize = readIntWithDefault(ctx, dirPath, "queueSize", 4096)
 	config.batchSize = readIntWithDefault(ctx, dirPath, "batchSize", 5)
 	config.batchDelay = readDurationWithDefault(ctx, dirPath, "batchDelay", 30*time.Second)
 	config.requestTimeout = readDurationWithDefault(ctx, dirPath, "requestTimeout", 250*time.Millisecond)

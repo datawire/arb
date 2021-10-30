@@ -56,10 +56,25 @@ func (w *Worker) Add(ctx context.Context, entry json.RawMessage) {
 }
 
 // Enqueue grabs the mutex and actually writes the given entry into our queue.
-func (w *Worker) Enqueue(ctx context.Context, entry json.RawMessage) {
+// It returns the number of messages dropped from the queue due to it being full.
+func (w *Worker) Enqueue(ctx context.Context, entry json.RawMessage) int {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 	w.pendingEntries = append(w.pendingEntries, entry)
+
+	// Assume that we don't need to drop any entries...
+	dropped := 0
+
+	// ...then actually check, and drop if need be.
+	//
+	// XXX This is ripe for optimization... later.
+	if (w.config.queueSize > 0) && (len(w.pendingEntries) > w.config.queueSize) {
+		dropped = len(w.pendingEntries) - w.config.queueSize
+		w.pendingEntries = w.pendingEntries[dropped:]
+		// dlog.Debugf(ctx, "Mgr %d: queue size exceeded, dropped %d %s", w.id, dropped, PluralEntry(delta))
+	}
+
+	return dropped
 }
 
 // GrabEntries grabs the mutex and pulls all the pendingEntries off the queue,
@@ -97,14 +112,19 @@ func (w *Worker) RunManager(ctx context.Context) error {
 	// Keep track of when we last triggered the worker.
 	lastTriggered := time.Now()
 
+	// Keep track of the last time we logged about dropped entries.
+	lastLoggedDrops := time.Now()
+	dropped := 0
+
 	// Loop forever looking for things to do.
 	for {
 		// Start by waiting for something to happen.
 		select {
 		case entry := <-w.entryChannel:
 			// A new entry has arrived, so we need to add it to our queue.
-			w.Enqueue(ctx, entry)
-			dlog.Debugf(ctx, "Mgr %d: new entry", w.id)
+			justDropped := w.Enqueue(ctx, entry)
+			dropped += justDropped
+			dlog.Debugf(ctx, "Mgr %d: new entry (dropped %d)", w.id, justDropped)
 
 		case <-time.After(w.config.batchDelay):
 			// Make sure that we wake up at least once every batchDelay, in case
@@ -144,6 +164,14 @@ func (w *Worker) RunManager(ctx context.Context) error {
 			// ...and reset the lastTriggered time so we don't instantly trigger it
 			// next time through!
 			lastTriggered = time.Now()
+		}
+
+		// If we've dropped any messages, and it's been at least five minutes since
+		// we last logged about it, log about it again.
+		if (dropped > 0) && (time.Since(lastLoggedDrops) > (5 * time.Minute)) {
+			dlog.Warnf(ctx, "Mgr %d: dropped %d %s in the last five minutes", w.id, dropped, PluralEntry(dropped))
+			lastLoggedDrops = time.Now()
+			dropped = 0
 		}
 	}
 }
