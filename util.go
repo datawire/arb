@@ -1,3 +1,5 @@
+// Copyright (c) 2021 Ambassador Labs, Inc. See LICENSE for license information.
+
 package main
 
 import "net/http"

@@ -3,8 +3,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
 	"sync"
 	"time"
 
@@ -98,9 +101,78 @@ func (w *Worker) sendall(ctx context.Context) {
 		return
 	}
 
-	// Send all entries
-
+	// OK, we have some entries. Marshal them up as JSON (this can't actually
+	// fail, since the entries are already json.RawMessages)...
 	allEntries, _ := json.Marshal(rawEntries)
-	dlog.Infof(ctx, "==== %d: %s ", w.id, w.service)
-	dlog.Infof(ctx, "%s", string(allEntries))
+
+	// ...and dive into the retry loop.
+	attempt := 0
+	retryDelay := w.config.retryDelay
+
+	for {
+		// Increment attempt here so that the log message looks better.
+		attempt++
+
+		// dlog.Infof(ctx, "Wrk %d: sending %d entries, attempt %d", w.id, numEntries, attempt)
+
+		status := w.attempt(ctx, allEntries)
+
+		if status == http.StatusOK {
+			// All good; we're done here.
+			dlog.Infof(ctx, "Wrk %d: %s OK!", w.id, w.service)
+			return
+		}
+
+		// Something has gone wrong. Can we retry?
+		canRetry := IsRetryable(status)
+
+		if !canRetry || (attempt >= w.config.retries) {
+			// Bzzzt.
+			errstr := "client-side failure"
+
+			if status >= 0 {
+				errstr = fmt.Sprintf("%d", status)
+			}
+
+			dlog.Errorf(ctx, "FAILED: %s got %s on final retry", w.service, errstr)
+			return
+		}
+
+		// We're allowed to retry. Wait for the retry delay and try again.
+		dlog.Infof(ctx, "Wrk %d: %s will retry %d in %s", w.id, w.service, status, retryDelay)
+		retryDelay = retryDelay * time.Duration(w.config.retryMultiplier)
+
+		time.Sleep(retryDelay)
+	}
+}
+
+// attempt makes a single attempt to send the entries to the upstream service.
+func (w *Worker) attempt(ctx context.Context, allEntries []byte) int {
+	// dlog.Infof(ctx, "Wrk %d (%s): %s", w.id, w.service, string(allEntries))
+
+	// This is a pretty straightforward HTTP POST; we just need to be sure to set
+	// the Content-Type header to application/json.
+	req, err := http.NewRequestWithContext(ctx, "POST", w.service, bytes.NewBuffer(allEntries))
+
+	if err != nil {
+		dlog.Errorf(ctx, "Wrk %d: failed to create request: %s", w.id, err)
+		return -1
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: w.config.requestTimeout}
+
+	resp, err := client.Do(req)
+
+	if err != nil {
+		dlog.Errorf(ctx, "Wrk %d: failed to send request: %s", w.id, err)
+		return -1
+	}
+
+	// It always feels weird to me to defer a close so late, but, well, can't defer
+	// it until we've checked the error from client.Do, so oh well.
+	defer resp.Body.Close()
+
+	return resp.StatusCode
 }
