@@ -1,0 +1,12 @@
+---
+apiVersion: getambassador.io/v3alpha1
+kind: LogService
+metadata:
+  name: test-logsvc
+spec:
+  service: arb.default:9001
+  driver: http
+  grpc: true
+  driver_config: {}
+  flush_interval_time: 10
+  # flush_interval_byte_size: integer # optional; default is 16384

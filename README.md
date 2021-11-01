@@ -8,7 +8,7 @@ REST services to use the access logs too.
 ARB is a separate service, deployed independently of Emissary-ingress or Ambassador Edge
 Stack. Multiple ARBs can be deployed if desired. As log entries arrive from Envoy, they
 are batched within ARB, then dispatched in parallel to one or more upstream REST services.
-If a REST call fails with a 4YZ status, ARB will retry, with a configurable backoff between
+If a REST call fails with a 5YZ status, ARB will retry, with a configurable backoff between
 retries, up to a configurable maximum number of retries. For other errors, ARB will *not*
 retry, though it will log the error.
 
