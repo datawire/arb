@@ -17,6 +17,8 @@ import (
 	"google.golang.org/grpc"
 )
 
+//////////////// AccessLogService glue
+
 // server is a glue type that lets us glue our logic into the ALS handler in the
 // go-control-plane. The "marshaler" is solely for the glue, but the "workers" array
 // stores important state for our implementation.
@@ -64,20 +66,31 @@ func (s *server) StreamAccessLogs(stream als_service_v2.AccessLogService_StreamA
 			return err
 		}
 
-		// So far so good. Iterate over all the log entries from the message.
-		for _, entry := range in.GetHttpLogs().LogEntry {
+		// Grab the individual log entries from the message...
+		entries := in.GetHttpLogs().LogEntry
+
+		// ...then iterate over all the log entries from the message and feed them to
+		// our upstream workers.
+		for _, entry := range entries {
 			// We marshal the entry into JSON only once -- no sense running that
 			// code for each worker.
 			entryJSON, _ := s.marshaler.MarshalToString(entry)
 
-			// Once marshaled, hand it off to each worker.
+			// After marshaling the entry, we turn it into a json.RawMessage, which
+			// makes it easier for the workers to wrangle when they hand multiple
+			// entries upstream.
+			rawEntry := json.RawMessage(entryJSON)
+
+			// Finally, hand rawEntry off to each worker.
 			for _, worker := range s.workers {
-				// dlog.Debugf(stream.Context(), "Sending to worker %d", worker.id)
-				worker.Add(stream.Context(), json.RawMessage(entryJSON))
+				// dlog.Debugf(stream.Context(), "gRPC: sending to worker %d", worker.id)
+				worker.Add(stream.Context(), rawEntry)
 			}
 		}
 	}
 }
+
+//////////////// Mainline
 
 func main() {
 	// Start by setting up our context.
@@ -99,6 +112,7 @@ func main() {
 	dlog.Infof(ctx, "ARB startup: retryMultiplier %v", config.retryMultiplier)
 	dlog.Infof(ctx, "ARB startup: services        %v", config.services)
 
+	// Grab a new server instance using the config we just read.
 	als := NewALS(config)
 
 	// We're going to be running tasks in parallel, so we'll use dgroup to manage

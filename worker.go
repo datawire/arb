@@ -16,6 +16,15 @@ import (
 	"github.com/datawire/dlib/dlog"
 )
 
+// A Worker is a thing that manages communications with a single upstream
+// service. There are two goroutines active for each Worker:
+//
+// - The Manager goroutine listens for new entries from the gRPC server, queues
+//   them up, and triggers the Worker when it's time to send a new batch of entries.
+//
+// - The Worker goroutine responds to triggers from the Manager goroutine, manages
+//   communications, and handles retries, etc.
+
 type Worker struct {
 	config  *ArbConfig // The configuration for this whole ARB
 	id      int        // The index of service we're managing
@@ -28,6 +37,7 @@ type Worker struct {
 	triggerChannel chan struct{}        // Channel for the manager to trigger the worker
 }
 
+// NewWorker creates a new Worker. It does _not_ start any goroutines.
 func NewWorker(config *ArbConfig, id int) *Worker {
 	return &Worker{
 		config:         config,
@@ -84,19 +94,27 @@ func (w *Worker) Trigger(ctx context.Context) {
 func (w *Worker) RunManager(ctx context.Context) error {
 	dlog.Infof(ctx, "Mgr %d: starting for %s", w.id, w.service)
 
+	// Loop forever looking for things to do.
 	for {
+		// Start by assuming that we want a full batch of entries before
+		// sending anything...
 		threshold := w.config.batchSize
 
+		// ...then wait for something to happen.
 		select {
 		case entry := <-w.entryChannel:
+			// A new entry has arrived, so we need to add it to our queue.
 			w.Enqueue(ctx, entry)
 			dlog.Infof(ctx, "Mgr %d: new entry", w.id)
 
 		case <-time.After(w.config.batchDelay):
+			// It's been a little while with no new entries. If we have any
+			// pendingEntries at all, send them.
 			dlog.Infof(ctx, "Mgr %d: delay expired", w.id)
 			threshold = 1
 
 		case <-ctx.Done():
+			// Shutdown! We're done here.
 			dlog.Infof(ctx, "Mgr %d: shutting down", w.id)
 			return nil
 		}
