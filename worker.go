@@ -30,9 +30,30 @@ func NewWorker(config *ArbConfig, id int) *Worker {
 	}
 }
 
-// Add adds a new entry to our worker's queue.
+// Add writes a new entry onto our Worker's entryChannel for its Manager goroutine
+// to pick up.
 func (w *Worker) Add(ctx context.Context, entry json.RawMessage) {
 	w.entryChannel <- entry
+}
+
+// Enqueue grabs the mutex and actually writes the given entry into our queue.
+func (w *Worker) Enqueue(ctx context.Context, entry json.RawMessage) {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+	w.pendingEntries = append(w.pendingEntries, entry)
+}
+
+// GrabEntries grabs the mutex and pulls all the pendingEntries off the queue,
+// returning the entries and emptying the pendingEntries queue so that the
+// Manager can start adding new entries as they arrive.
+func (w *Worker) GrabEntries(ctx context.Context) []json.RawMessage {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+
+	allEntries := w.pendingEntries
+	w.pendingEntries = make([]json.RawMessage, 0)
+
+	return allEntries
 }
 
 // Run should be called as a goroutine and managed by dgroup.
@@ -44,15 +65,7 @@ func (w *Worker) Run(ctx context.Context) error {
 
 		select {
 		case entry := <-w.entryChannel:
-			// This is a CLOSURE, not just a random anonymous function.
-			// The point is that we want to defer the unlock, but we
-			// also don't want to be holding the lock while logging.
-			func() {
-				w.mutex.Lock()
-				defer w.mutex.Unlock()
-				w.pendingEntries = append(w.pendingEntries, entry)
-			}()
-
+			w.Enqueue(ctx, entry)
 			dlog.Infof(ctx, "Worker %d: new entry", w.id)
 
 		case <-time.After(w.config.batchDelay):
@@ -75,17 +88,19 @@ func (w *Worker) Run(ctx context.Context) error {
 // sendall handles the heavy lifting of actually sending requests
 // to the service.
 func (w *Worker) sendall(ctx context.Context) {
-	w.mutex.Lock()
-	defer w.mutex.Unlock()
+	// Grab our pendingEntries.
+	rawEntries := w.GrabEntries(ctx)
 
-	if len(w.pendingEntries) == 0 {
+	// If there are somehow no entries, we're done. This should be impossible.
+	numEntries := len(rawEntries)
+
+	if numEntries == 0 {
 		return
 	}
 
 	// Send all entries
 
-	allEntries, _ := json.Marshal(w.pendingEntries)
-	dlog.Infof(ctx, "==== %d: %s: sending %s", w.id, w.service, string(allEntries))
-
-	w.pendingEntries = make([]json.RawMessage, 0)
+	allEntries, _ := json.Marshal(rawEntries)
+	dlog.Infof(ctx, "==== %d: %s ", w.id, w.service)
+	dlog.Infof(ctx, "%s", string(allEntries))
 }
