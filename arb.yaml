@@ -47,6 +47,9 @@ spec:
       containers:
       - image: ko://github.com/datawire/arb
         name: arb
+        env:
+        - name: "ARB_INSECURE_TLS"
+          value: "true"
         terminationMessagePath: /dev/termination-log
         terminationMessagePolicy: File
         volumeMounts:

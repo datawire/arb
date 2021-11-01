@@ -5,9 +5,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -162,6 +164,15 @@ func (w *Worker) attempt(ctx context.Context, allEntries []byte) int {
 	req.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{Timeout: w.config.requestTimeout}
+
+	if os.Getenv("ARB_INSECURE_TLS") == "true" {
+		// No, no indeed, it is _not_ a great idea to disable server cert verifications.
+		// But the user is asking for it, so...
+		tr := http.DefaultTransport.(*http.Transport).Clone()
+		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+
+		client.Transport = tr
+	}
 
 	resp, err := client.Do(req)
 
