@@ -1,0 +1,84 @@
+# Use this to play with rate limiting by:
+#
+# 1. kubectl apply this file
+# 2. curl http[s]://<your-ip-or-domain>/{foo,bar}
+---
+apiVersion: getambassador.io/v3alpha1
+kind: Mapping
+metadata:
+  name: test-mapping-foo
+  namespace: default
+spec:
+  hostname: "*"
+  prefix: /foo
+  rewrite: /
+  service: http://httpbin.org
+  cors:
+    origins: ["*"]
+  labels:
+    ambassador:
+      - min_group:
+        - generic_key: 
+            value: "boo"
+        - generic_key:
+            value: "minute"
+        - remote_address:
+            key: "remote_address"
+      - hour_group:
+        - generic_key: { value: "boo" }
+        - generic_key: { value: "hour" }
+        - remote_address: { key: "remote_address" }
+      - day_group:
+        - generic_key: { value: "boo" }
+        - generic_key: { value: "day" }
+        - remote_address: { key: "remote_address" }
+---
+apiVersion: getambassador.io/v3alpha1
+kind: Mapping
+metadata:
+  name: test-mapping-bar
+  namespace: default
+spec:
+  hostname: "*"
+  prefix: /bar
+  rewrite: /
+  service: http://httpbin.org
+  cors:
+    origins: ["*"]
+  labels:
+    ambassador:
+      - bar_group:
+        - generic_key: { value: "bar" }
+        - remote_address: { key: "remote_address" }
+---
+apiVersion: getambassador.io/v3alpha1
+kind: RateLimit
+metadata:
+  name: test-rate-limit
+spec:
+  domain: ambassador
+  limits:
+   - pattern: [{generic_key: boo}, {generic_key: minute}, {remote_address: "*"}]
+     rate: 3
+     unit: minute
+     burstFactor: 5
+     errorResponse:
+       bodyTemplate: "slow down (minute)"
+   - pattern: [{generic_key: boo}, {generic_key: hour}, {remote_address: "*"}]
+     rate: 12
+     unit: hour
+     burstFactor: 1
+     errorResponse:
+       bodyTemplate: "slow down (hour)"
+   - pattern: [{generic_key: boo}, {generic_key: day}, {remote_address: "*"}]
+     rate: 100
+     unit: day
+     burstFactor: 1
+     errorResponse:
+       bodyTemplate: "slow down (day)"
+   - pattern: [{generic_key: bar}, {remote_address: "*"}]
+     rate: 3
+     unit: minute
+     burstFactor: 1
+     errorResponse:
+       bodyTemplate: slow down

@@ -246,6 +246,72 @@ hour:
 WARNING: no requests in one hour; check your LogService configuration
 ```
 
+## Running the demo
+
+Set up a cluster and install version 2.0.4 or higher of either Emissary or Edge Stack.
+(Edge Stack is preferred, since its built-in rate limiter provides metadata that the
+`arblogger` demo REST service can use.)
+
+AFTER installing Emissary or Edge Stack, run `make demo` to install other demo resources.
+This will install:
+
+- A `Listener` and `Host` to allow HTTP routing
+- ARB itself (using `ko`; see below)
+- Three instances of the demo `arblogger` REST service (source is available at 
+  https://github.com/datawire/arblogger)
+- A `LogService` which feeds data to the ARB
+- An ARB configuration which feeds data to the `arblogger` services
+- The Quote of the Moment service
+- A `Mapping` from `/backend/` to the Quote of the Moment service
+- A `Mapping` from `/foo` to `https://httpbin.org`
+- A `Mapping` from `/bar` to `https://httpbin.org`
+- If Edge Stack is installed, a `RateLimit` resource that applies rate limits
+  to the `/foo` and `/bar` `Mapping`s
+
+Once this is all installed, you can watch the logs for the `arblogger` and `arb`
+instances, and send requests using the IP of your Emissary or Edge Stack service:
+
+- `http://$IP/backend/` will never be rate limited
+
+- If Edge Stack is installed:
+  - `http://$IP/foo/ip` will allow up to 3 requests per minute (bursting up to 15), 12 per hour, 100 per day
+  - `http://$IP/bar/ip` will allow up the 3 requests per minute
+
+If Emissary is installed, the `foo` and `bar` rate limits will not apply.
+
+The demo ARB configuration has a batch size of 10, a batch delay of 30s, and a queue size of
+30, so:
+
+- requests may take 30 seconds to be sent upstream, unless you send 10 or more in quick
+  succession, and
+- only 30 requests can be in the queue at a time.
+
+Note that Envoy can also take up to 10 seconds to pass a request to ARB.
+
+Requests may arrive out of order, since the demo configuration has multiple instances of
+Emissary or Edge Stack. Since the demo `arblogger` will log the `X-Request-ID` header,
+supplying unique `X-Request-ID` headers can be helpful for seeing exactly what's going on:
+(If no `X-Request-ID` is in your request, Envoy will supply a UUID for it.)
+
+The demo configuration uses the three demo `arblogger` instances differently:
+
+- It uses HTTPS to `arblogger1`, which is configured to always return 200 when ARB
+  contacts it. You will see output from this `arblogger`, but you shouldn't see ARB
+  itself logging much about it.
+- It also uses HTTPS to `arblogger2`, which is configured to always return 404 when
+  ARB contacts it. You will see output from this `arblogger`, but you should also see
+  ARB logging `FAILED: https://arblogger2/404 got 404 on final retry`.
+- Finally, it uses HTTP to `arblogger3`, which is configured to always return 503 when
+  ARB contacts it. You will see output from this `arblogger`, but ARB will constantly
+  be retrying requests to it, so you will see `FAILED: http://arblogger3/503 got 503 on
+  final retry` messages from ARB (eventually), and you will also see ARB logging about
+  `Mgr 2` dropping entries.
+
+(If you send requests more quickly than `arblogger1` and `arblogger2` can process them,
+you will eventually see messages about `Mgr 0` and `Mgr 1` dropping entries. Each upstream
+has an `Mgr` and a `Wrk` goroutine; the `Mgr` goroutine manages the queue for that upstream,
+and the `Wrk` goroutine actually makes the REST requests.)
+
 ## Debugging ARB
 
 Set the environment variable `ARB_LOG_LEVEL=debug` to enable more debug logging from

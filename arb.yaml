@@ -4,6 +4,7 @@ kind: ConfigMap
 metadata:
   name: arb-configuration
 data:
+  queueSize: "30"
   batchSize: "10"
   requestTimeout: "500ms"
   retries: "5"
