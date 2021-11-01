@@ -259,8 +259,11 @@ This will install:
 - ARB itself (using `ko`; see below)
 - Three instances of the demo `arblogger` REST service (source is available at 
   https://github.com/datawire/arblogger)
+   - **Note**: Since the `arblogger` demo service is deployed using a self-signed
+     certificate, the demo `arb` deployment sets `ARB_INSECURE_TLS` to turn off TLS
+     certificate validation. This is **not** good practice in production!
 - A `LogService` which feeds data to the ARB
-- An ARB configuration which feeds data to the `arblogger` services
+- An ARB configuration which feeds data to the three `arblogger` services (see below)
 - The Quote of the Moment service
 - A `Mapping` from `/backend/` to the Quote of the Moment service
 - A `Mapping` from `/foo` to `https://httpbin.org`
@@ -293,6 +296,44 @@ Emissary or Edge Stack. Since the demo `arblogger` will log the `X-Request-ID` h
 supplying unique `X-Request-ID` headers can be helpful for seeing exactly what's going on:
 (If no `X-Request-ID` is in your request, Envoy will supply a UUID for it.)
 
+When testing, the following shell function can be helpful for sending multiple requests
+with `X-Request-ID` set:
+
+```bash
+echo "0" > /tmp/msgid
+
+send () {
+  max="$1"
+  url="$2"
+
+  if [ -z "$max" -o -z "$url" ]; then
+    echo "Usage: send count URL" >&2
+    echo "" >&2
+    echo "count: number of requests to send" >&2
+    echo "URL: URL to send to" >&2
+    echo "" >&2
+    echo "/tmp/msgid must contain an integer for the X-Message-ID header" >&2
+    return 1
+  fi
+
+  i=0
+
+  while [ $i -lt $max ]; do
+    i=$(( $i + 1 ))
+    id=$(cat /tmp/msgid)
+    id=$(( $id + 1 ))
+    echo $id > /tmp/msgid
+    id="send-$(printf "%05d\n" $id)"
+    echo "$id"
+    curl -i -H "X-Request-ID: $id" "$url"
+  done
+}
+```
+
+Then e.g. `send 5 http://$IP/backend/` will send five requests to the Quote of the 
+Moment as fast as possible, and `send 10 http://$IP/foo/ip` will send 10 requests to
+the `foo` ratelimited endpoint.
+
 The demo configuration uses the three demo `arblogger` instances differently:
 
 - It uses HTTPS to `arblogger1`, which is configured to always return 200 when ARB
@@ -311,6 +352,9 @@ The demo configuration uses the three demo `arblogger` instances differently:
 you will eventually see messages about `Mgr 0` and `Mgr 1` dropping entries. Each upstream
 has an `Mgr` and a `Wrk` goroutine; the `Mgr` goroutine manages the queue for that upstream,
 and the `Wrk` goroutine actually makes the REST requests.)
+
+**Note**: Again, the demo `arb` deployment sets `ARB_INSECURE_TLS` to turn off TLS
+certificate validation. This is **not** good practice in production!
 
 ## Debugging ARB
 
