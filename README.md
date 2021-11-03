@@ -101,6 +101,109 @@ For details on the format of an `HTTPAccessLogEntry`, see the [`HTTPAccessLogEnt
 [`HTTPAccessLogEntries`]: https://www.envoyproxy.io/docs/envoy/v1.17.4/api-v2/data/accesslog/v2/accesslog.proto#envoy-api-file-envoy-data-accesslog-v2-accesslog-proto
 [`HTTPAccessLogEntry` specification]: https://www.envoyproxy.io/docs/envoy/v1.17.4/api-v2/data/accesslog/v2/accesslog.proto#envoy-api-file-envoy-data-accesslog-v2-accesslog-proto
 
+## Deployment (tl;dr)
+
+Deploy the ARB in these three steps. Once deployed, it will automatically start
+forwarding logs it receives from Envoy to your configured REST service.
+
+See the [Configuration](#configuration) section below for more details.
+
+1. Apply the `arb-configuration` `ConfigMap`
+
+The ARB uses a `ConfigMap` to configure what REST service to talk to and how to
+talk to it.
+
+```yaml
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: arb-configuration
+  namespace: ambassador
+data:
+  requestTimeout: "500ms"
+  retries: "5"
+  services: |-
+    https://webhook-service.default.cluster.local/
+```
+
+2. Deploy the ARB
+
+The ARB is deployed as a separate service to Edge Stack and Emissary. Create the
+following `Deployment` and `Service` to add the ARB to your cluster.
+
+```yaml
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: arb
+spec:
+  ports:
+  - name: grpc
+    port: 9001
+    targetPort: 9001
+  selector:
+    app.kubernetes.io/name: arb 
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: arb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: arb
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: arb
+    spec:
+      containers:
+      - image: docker.io/nkrause/arb:1.0.0
+        name: arb
+        env:
+        - name: "ARB_INSECURE_TLS"
+          value: "true"
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - name: config-volume
+          mountPath: /etc/arb-config
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+      volumes:
+      - name: config-volume
+        configMap:
+          name: arb-configuration
+```
+
+3. Create a `LogService` to tell Envoy to send logs to the ARB
+
+```yaml
+---
+apiVersion: getambassador.io/v3alpha1
+kind: LogService
+metadata:
+  name: test-logsvc
+spec:
+  service: arb.default:9001
+  driver: http
+  grpc: true
+  driver_config: {}
+  flush_interval_time: 10
+```
+
+You now have everything setup to use the ARB to translate logs messages sent 
+from Envoy over gRPC to REST services. You can check out the 
+[demo](# Running the demo) for an example of a rest service the ARB will send 
+requests to.
 ## Configuration
 
 The ARB reads its configuration from a Kubernetes ConfigMap. By default, this map is named
@@ -198,17 +301,17 @@ spec:
         app.kubernetes.io/name: arb
     spec:
       containers:
-      - image: docker.io/datawire/arb:1.0.0
-        imagePullPolicy: IfNotPresent
+      - image: docker.io/nkrause/arb:1.0.0
         name: arb
+        env:
+        - name: "ARB_INSECURE_TLS"
+          value: "true"
         terminationMessagePath: /dev/termination-log
         terminationMessagePolicy: File
         volumeMounts:
         - name: config-volume
           mountPath: /etc/arb-config
-              restartPolicy: Always
-      serviceAccount: arb-account
-      serviceAccountName: arb-account
+      restartPolicy: Always
       terminationGracePeriodSeconds: 30
       volumes:
       - name: config-volume
@@ -223,7 +326,7 @@ not exist. Also note that ARB 1.0.0 must be restarted when its configuration is 
 Once deployed, a `LogService` must be configured to tell Edge Stack to send
 logs to the ARB:
 
-```
+```yaml
 ---
 apiVersion: getambassador.io/v3alpha1
 kind: LogService

@@ -1,8 +1,8 @@
 .DEFAULT_GOAL = apply
 
-DOCKER_REGISTRY = dwflynn
-IMAGE_NAME = arb
-IMAGE_TAG = 1.0.0
+DOCKER_REGISTRY ?= dwflynn
+IMAGE_NAME ?= arb
+IMAGE_TAG ?= 1.0.0
 
 tools/ko = tools/bin/ko
 tools/bin/%: tools/src/%/go.mod tools/src/%/pin.go
