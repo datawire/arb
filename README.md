@@ -202,7 +202,7 @@ spec:
 
 You now have everything setup to use the ARB to translate logs messages sent 
 from Envoy over gRPC to REST services. You can check out the 
-[demo](# Running the demo) for an example of a rest service the ARB will send 
+[demo](#running-the-demo) for an example of a rest service the ARB will send 
 requests to.
 ## Configuration
 
