@@ -39,6 +39,7 @@ spec:
       containers:
       - name: backend
         image: dwflynn/arblogger:1.0.0
+        imagePullPolicy: Always
         ports:
         - name: https
           containerPort: 8443
@@ -84,6 +85,7 @@ spec:
       containers:
       - name: backend
         image: dwflynn/arblogger:1.0.0
+        imagePullPolicy: Always
         ports:
         - name: https
           containerPort: 8443
@@ -129,6 +131,43 @@ spec:
       containers:
       - name: backend
         image: dwflynn/arblogger:1.0.0
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: arblogger4
+spec:
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+  selector:
+    app: arblogger4
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: arblogger4
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: arblogger4
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: arblogger4
+    spec:
+      containers:
+      - name: backend
+        image: dwflynn/arblogger:1.0.0
+        imagePullPolicy: Always
         ports:
         - name: http
           containerPort: 8080

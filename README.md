@@ -124,7 +124,7 @@ data:
   requestTimeout: "500ms"
   retries: "5"
   services: |-
-    https://webhook-service.default.cluster.local/
+    https://webhook-service.default.cluster.local/ (429, 200)
 ```
 
 2. Deploy the ARB
@@ -201,16 +201,18 @@ spec:
 ```
 
 You now have everything setup to use the ARB to translate logs messages sent 
-from Envoy over gRPC to REST services. You can check out the 
-[demo](#running-the-demo) for an example of a rest service the ARB will send 
-requests to.
+from Envoy over gRPC to REST services. You can check out the [demo](#running-the-demo)
+for an example of a rest service that can process the ARB's requests.
+
 ## Configuration
 
 The ARB reads its configuration from a Kubernetes ConfigMap. By default, this map is named
 `arb-configuration`, and the ARB mounts it from the namespace in which the ARB is installed.
 If need be, you can edit the ARB Deployment to mount a different ConfigMap.
 
-**Note well**: You will need to create the ARB ConfigMap before deploying ARB. Since the configuration is mounted into the ARB Pods, deployment will fail if the ConfigMap does not exist. Also note that ARB 1.0.0 must be restarted when its configuration is changed. 
+**Note well**: You will need to create the ARB ConfigMap before deploying ARB. Since the
+configuration is mounted into the ARB Pods, deployment will fail if the ConfigMap does not
+exist. Also note that ARB 1.0.0 must be restarted when its configuration is changed. 
 
 The contents of the map are:
 
@@ -224,7 +226,18 @@ The contents of the map are:
 | `retries`         | `int`             | 3       | Number of times to retry |
 | `retryDelay`      | `duration`        | 30s     | Initial delay before retry |
 | `retryMultiplier` | `int`             | 2       | Multiplier for retry delay on each retry |
-| `services`        | array of `string` | None    | Services to send REST requests |
+| `services`        | array of `string` | None    | Services to which to send REST requests (see below) |
+
+Each entry in `services` is a string specifying the URL of the service and, optionally,
+which status codes to send there:
+
+| Service Entry | Effect |
+| `https://foo.example.com/logger` | Send all logged requests to `https://foo.example.com/logger` |
+| `https://bar.example.com/logger (429)` | Send only requests logged as having status 429 to `https://bar.example.com/logger` |
+| `https://bar.example.com/logger (429, 200, 503)` | Send only requests logged as having status 429, 503, or 200 to `https://bar.example.com/logger` |
+
+A misformatted `services` entry will be ignored, but other correctly-formatted
+entries will be accepted if some are bad.
 
 A sample configuration might be:
 
@@ -238,18 +251,27 @@ data:
   requestTimeout: "500ms"
   retries: "5"
   services: |-
-    https://foo.example.com/service1
-    https://bar.example.com/service2
+    https://foo.example.com/service1 (429, 200)
+    https://bar.example.com/service2 (429)
     http://cleartext.example.com/do-not-use
 ```
 
-In this example, ARB will listen on port 9001. REST requests will be sent whenever Envoy
-has sent five updates, or if Envoy has sent at least one update and 30 seconds have passed
-since the last REST requests were sent. REST requests will be sent to each of the three
-services listed, in parallel. A given REST request will have 500ms to complete. A timeout
-or `5YZ` response will be retried up to 5 times, waiting 30s between the failed initial
-request and the first retry, with the delay doubling on each retry (so the maximum delay -
-between retries 4 and 5 - will be 8 minutes).
+In this example:
+
+- ARB will listen on port 9001.
+- REST requests will be sent whenever Envoy has sent five updates, or if Envoy has sent
+  at least one update and 30 seconds have passed since the last REST requests were sent.
+- REST requests will be sent to `https://foo.example.com/service1` only for logged requests
+  that had a status of 429 or 200.
+- REST requests will be sent to `https://foo.example.com/service1` only for logged requests
+  that had a status of 429.
+- REST requests will be sent to `http://cleartext.example.com/do-not-use` for all logged
+  requests, regardless of status. (As implied by the name of this service, using cleartext
+  services is a security risk.)
+- A given REST request will have 500ms to complete.
+- A timeout or `5YZ` response (see below) will be retried up to 5 times, waiting 30s between
+  the failed initial request and the first retry, with the delay doubling on each retry (so
+  the maximum delay - between retries 4 and 5 - will be 8 minutes).
 
 Note that ARB retries _`5YZ`_ retries, not _`4YZ`_ responses. A `4YZ` response indicates
 that something about the request is wrong: it is unlikely to succeed if retried. A `5YZ`
@@ -360,13 +382,17 @@ This will install:
 
 - A `Listener` and `Host` to allow HTTP routing
 - ARB itself (using `ko`; see below)
-- Three instances of the demo `arblogger` REST service (source is available at 
+- Four instances of the demo `arblogger` REST service (source is available at 
   https://github.com/datawire/arblogger)
    - **Note**: Since the `arblogger` demo service is deployed using a self-signed
      certificate, the demo `arb` deployment sets `ARB_INSECURE_TLS` to turn off TLS
      certificate validation. This is **not** good practice in production!
+   - `arblogger1` will get all requests; it will reply to them with a `200`
+   - `arblogger2` will get only `429` requests; it will reply to them with a `200`
+   - `arblogger3` will get only `200` requests; it will reply to them with a `404`
+   - `arblogger4` will get only `429` requests; it will reply to them with a `503`
 - A `LogService` which feeds data to the ARB
-- An ARB configuration which feeds data to the three `arblogger` services (see below)
+- An ARB configuration which feeds data to the four `arblogger` services (see below)
 - The Quote of the Moment service
 - A `Mapping` from `/backend/` to the Quote of the Moment service
 - A `Mapping` from `/foo` to `https://httpbin.org`
@@ -437,24 +463,29 @@ Then e.g. `send 5 http://$IP/backend/` will send five requests to the Quote of t
 Moment as fast as possible, and `send 10 http://$IP/foo/ip` will send 10 requests to
 the `foo` ratelimited endpoint.
 
-The demo configuration uses the three demo `arblogger` instances differently:
+The demo configuration uses the four demo `arblogger` instances differently:
 
-- It uses HTTPS to `arblogger1`, which is configured to always return 200 when ARB
-  contacts it. You will see output from this `arblogger`, but you shouldn't see ARB
-  itself logging much about it.
-- It also uses HTTPS to `arblogger2`, which is configured to always return 404 when
-  ARB contacts it. You will see output from this `arblogger`, but you should also see
-  ARB logging `FAILED: https://arblogger2/404 got 404 on final retry`.
-- Finally, it uses HTTP to `arblogger3`, which is configured to always return 503 when
-  ARB contacts it. You will see output from this `arblogger`, but ARB will constantly
-  be retrying requests to it, so you will see `FAILED: http://arblogger3/503 got 503 on
-  final retry` messages from ARB (eventually), and you will also see ARB logging about
-  `Mgr 2` dropping entries.
+- It uses HTTPS to `arblogger1`, which is configured to accept all requests, and will
+  always return `200` when ARB contacts it. You will see output from this `arblogger`,
+  but you shouldn't see ARB itself logging much about it.
+- It also uses HTTPS to `arblogger2`, which is configured to accept only ratelimited requests
+  (status code 429), and will always return 200 when ARB contacts it. You will see output
+  from this `arblogger`, but you shouldn't see ARB itself logging much about it.
+- It also uses HTTP to `arblogger3`, which is configured to accept only ratelimited requests
+  (status code 429), and will always return 404 when ARB contacts it. You will see output
+  from this `arblogger`, but you should also see ARB logging 
+  `FAILED: http://arblogger3/404 got 404 on final retry` for requests sent to it.
+- Finally, it uses HTTP to `arblogger3`, which is configured to accept only ratelimited
+  requests (status code 429), and will always return 503 when ARB contacts it. You will
+  see output from this `arblogger`, but ARB will constantly be retrying requests to it,
+  so you won't see requests nearly as quickly as you will to the other three, and you'll
+  see `FAILED: http://arblogger4/503 got 503 on final retry` messages from ARB (eventually).
+  You will also see ARB logging about `Mgr 3` dropping entries after awhile.
 
-(If you send requests more quickly than `arblogger1` and `arblogger2` can process them,
-you will eventually see messages about `Mgr 0` and `Mgr 1` dropping entries. Each upstream
-has an `Mgr` and a `Wrk` goroutine; the `Mgr` goroutine manages the queue for that upstream,
-and the `Wrk` goroutine actually makes the REST requests.)
+If you send requests more quickly than the `arblogger`s can process them, you will eventually
+see messages about `Mgr 0`, `Mgr 1`, and `Mgr 2` dropping entries. Each upstream has an `Mgr`
+goroutine and a `Wrk` goroutine: the `Mgr` goroutine manages the queue for that upstream, and
+the `Wrk` goroutine actually makes the REST requests.
 
 **Note**: Again, the demo `arb` deployment sets `ARB_INSECURE_TLS` to turn off TLS
 certificate validation. This is **not** good practice in production!

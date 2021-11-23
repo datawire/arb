@@ -10,8 +10,9 @@ data:
   retries: "5"
   services: |-
     https://arblogger1/200
-    https://arblogger2/404
-    http://arblogger3/503
+    https://arblogger2/200 (429)
+    http://arblogger3/404 (200)
+    http://arblogger4/503 (429)
 ---
 apiVersion: v1
 kind: Service
