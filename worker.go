@@ -29,6 +29,7 @@ type Worker struct {
 	config  *ArbConfig // The configuration for this whole ARB
 	id      int        // The index of service we're managing
 	service ArbService // Cached copy of the service
+	pretty  string     // Cached pretty-printed version of the service
 
 	mutex          sync.Mutex        // Protects access to pendingEntries
 	pendingEntries []json.RawMessage // List of JSON entries to be processed
@@ -43,10 +44,16 @@ func NewWorker(config *ArbConfig, id int) *Worker {
 		config:         config,
 		id:             id,
 		service:        config.services[id],
+		pretty:         config.services[id].String(),
 		pendingEntries: make([]json.RawMessage, 0),
 		entryChannel:   make(chan json.RawMessage),
 		triggerChannel: make(chan struct{}),
 	}
+}
+
+// String returns a human-readable representation of this worker.
+func (w *Worker) String() string {
+	return w.pretty
 }
 
 // Accepts returns true IFF this worker will accept the given status code.
@@ -128,7 +135,7 @@ func (w *Worker) Trigger(ctx context.Context) {
 // It listens for new entries from the gRPC server, queues them up, and triggers the
 // Worker when it's time to send a new batch of entries.
 func (w *Worker) RunManager(ctx context.Context) error {
-	dlog.Infof(ctx, "Mgr %d: starting for %s", w.id, w.service)
+	dlog.Infof(ctx, "Mgr %d: starting for %s", w.id, w)
 
 	// Keep track of when we last triggered the worker.
 	lastTriggered := time.Now()
@@ -201,7 +208,7 @@ func (w *Worker) RunManager(ctx context.Context) error {
 // Its purpose is to actually send groups of entries to the upstream
 // service, managing retries and backoff.
 func (w *Worker) RunWorker(ctx context.Context) error {
-	dlog.Infof(ctx, "Wrk %d: starting for %s", w.id, w.service)
+	dlog.Infof(ctx, "Wrk %d: starting for %s", w.id, w)
 
 	// Loop forever looking for things to do.
 	for {
@@ -250,7 +257,7 @@ func (w *Worker) sendall(ctx context.Context) {
 
 		if status == http.StatusOK {
 			// All good; we're done here.
-			dlog.Debugf(ctx, "Wrk %d: %s OK!", w.id, w.service)
+			dlog.Debugf(ctx, "Wrk %d: %s OK!", w.id, w)
 			return
 		}
 
@@ -265,12 +272,12 @@ func (w *Worker) sendall(ctx context.Context) {
 				errstr = fmt.Sprintf("%d", status)
 			}
 
-			dlog.Errorf(ctx, "FAILED: %s got %s on final retry", w.service, errstr)
+			dlog.Errorf(ctx, "FAILED: %s got %s on final retry", w, errstr)
 			return
 		}
 
 		// We're allowed to retry. Wait for the retry delay and try again.
-		dlog.Debugf(ctx, "Wrk %d: %s will retry %d in %s", w.id, w.service, status, retryDelay)
+		dlog.Debugf(ctx, "Wrk %d: %s will retry %d in %s", w.id, w, status, retryDelay)
 		retryDelay = retryDelay * time.Duration(w.config.retryMultiplier)
 
 		time.Sleep(retryDelay)

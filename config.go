@@ -10,6 +10,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/datawire/dlib/dlog"
@@ -19,6 +20,22 @@ import (
 type ArbService struct {
 	URL   string // URL to contact
 	Codes []int  // HTTP status codes to send to this URL
+}
+
+func (svc *ArbService) String() string {
+	statusStrings := make([]string, 0)
+
+	for _, status := range svc.Codes {
+		statusStrings = append(statusStrings, strconv.Itoa(status))
+	}
+
+	statuses := strings.Join(statusStrings, ",")
+
+	if len(statuses) == 0 {
+		statuses = "*"
+	}
+
+	return fmt.Sprintf("%s (%s)", svc.URL, statuses)
 }
 
 type ArbConfig struct {

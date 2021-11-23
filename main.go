@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/datawire/dlib/dgroup"
@@ -189,7 +190,14 @@ func main() {
 	dlog.Infof(ctx, "ARB startup: retries         %v", config.retries)
 	dlog.Infof(ctx, "ARB startup: retryDelay      %v", config.retryDelay)
 	dlog.Infof(ctx, "ARB startup: retryMultiplier %v", config.retryMultiplier)
-	dlog.Infof(ctx, "ARB startup: services        %v", config.services)
+
+	serviceStrings := make([]string, 0, len(config.services))
+
+	for _, service := range config.services {
+		serviceStrings = append(serviceStrings, service.String())
+	}
+
+	dlog.Infof(ctx, "ARB startup: services        %v", strings.Join(serviceStrings, ", "))
 
 	// Grab a new server instance using the config we just read.
 	als := NewALS(config)
