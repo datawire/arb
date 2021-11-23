@@ -28,7 +28,7 @@ import (
 type Worker struct {
 	config  *ArbConfig // The configuration for this whole ARB
 	id      int        // The index of service we're managing
-	service string     // Cached copy of the service URL
+	service ArbService // Cached copy of the service
 
 	mutex          sync.Mutex        // Protects access to pendingEntries
 	pendingEntries []json.RawMessage // List of JSON entries to be processed
@@ -47,6 +47,27 @@ func NewWorker(config *ArbConfig, id int) *Worker {
 		entryChannel:   make(chan json.RawMessage),
 		triggerChannel: make(chan struct{}),
 	}
+}
+
+// Accepts returns true IFF this worker will accept the given status code.
+func (w *Worker) Accepts(statusCode int) bool {
+	// If no codes are specified, accept everything.
+	if len(w.service.Codes) == 0 {
+		return true
+	}
+
+	// OK, we have some codes specified, so check to see if we have a match.
+	//
+	// XXX Yes, linear searches are grim, but there really shouldn't be more
+	// than a few in our list, so whatever.
+	for _, code := range w.service.Codes {
+		if code == statusCode {
+			return true
+		}
+	}
+
+	// We had some codes and none of them matched, so we won't accept this.
+	return false
 }
 
 // Add writes a new entry onto our Worker's entryChannel for its Manager goroutine
@@ -262,7 +283,7 @@ func (w *Worker) attempt(ctx context.Context, allEntries []byte) int {
 
 	// This is a pretty straightforward HTTP POST; we just need to be sure to set
 	// the Content-Type header to application/json.
-	req, err := http.NewRequestWithContext(ctx, "POST", w.service, bytes.NewBuffer(allEntries))
+	req, err := http.NewRequestWithContext(ctx, "POST", w.service.URL, bytes.NewBuffer(allEntries))
 
 	if err != nil {
 		dlog.Errorf(ctx, "Wrk %d: failed to create request: %s", w.id, err)

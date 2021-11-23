@@ -91,10 +91,17 @@ func (s *server) StreamAccessLogs(stream als_service_v2.AccessLogService_StreamA
 			rawEntry := json.RawMessage(entryJSON)
 			// dlog.Debugf(stream.Context(), "gRPC: received entry %d", rawEntry)
 
-			// Finally, hand rawEntry off to each worker.
+			// OK. What status code is this entry?
+			statusCode := entry.Response.ResponseCode.Value
+			// dlog.Debugf(stream.Context(), "gRPC: status code %d", statusCode)
+
+			// Finally, hand rawEntry off to each worker that'll accept this status
+			// code.
 			for _, worker := range s.workers {
-				// dlog.Debugf(stream.Context(), "gRPC: sending to worker %d", worker.id)
-				worker.Add(stream.Context(), rawEntry)
+				if worker.Accepts(int(statusCode)) {
+					// dlog.Debugf(stream.Context(), "gRPC: sending to worker %d", worker.id)
+					worker.Add(stream.Context(), rawEntry)
+				}
 			}
 		}
 	}
