@@ -2,7 +2,7 @@
 
 DOCKER_REGISTRY ?= dwflynn
 IMAGE_NAME ?= arb
-IMAGE_TAG ?= 1.0.0
+IMAGE_TAG ?= 1.1.0
 
 tools/ko = tools/bin/ko
 tools/bin/%: tools/src/%/go.mod tools/src/%/pin.go

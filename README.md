@@ -1,4 +1,4 @@
-# ARB
+# ARB 1.1.0
 
 Emissary-ingress and Ambassador Edge Stack both support the Envoy Access Log Service (ALS)
 for handing access logs to an external service (the ALS). The ALS speaks a gRPC protocol
@@ -166,7 +166,7 @@ spec:
         app.kubernetes.io/name: arb
     spec:
       containers:
-      - image: docker.io/nkrause/arb:1.0.0
+      - image: docker.io/nkrause/arb:1.1.0
         name: arb
         env:
         - name: "ARB_INSECURE_TLS"
@@ -323,7 +323,7 @@ spec:
         app.kubernetes.io/name: arb
     spec:
       containers:
-      - image: docker.io/nkrause/arb:1.0.0
+      - image: docker.io/datawire/arb:1.0.0
         name: arb
         env:
         - name: "ARB_INSECURE_TLS"
